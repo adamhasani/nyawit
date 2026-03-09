@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sora 2 - AI Video</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
+        .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        input, button { width: 100%; padding: 10px; margin-top: 10px; box-sizing: border-box; }
+        button { background: #000; color: #fff; border: none; border-radius: 5px; font-weight: bold; }
+        button:disabled { background: #ccc; }
+        #status { margin-top: 15px; font-size: 14px; text-align: center; color: #555; }
+        video { width: 100%; margin-top: 15px; border-radius: 10px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h3>Sora 2 Generator</h3>
+        <input type="file" id="imageInput" accept="image/*">
+        <input type="text" id="promptInput" placeholder="Ketik prompt di sini...">
+        <button id="btnGenerate">Buat Video</button>
+        <div id="status"></div>
+        <video id="resultVideo" controls></video>
+    </div>
+
+    <script>
+        const toBase64 = file => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = error => reject(error);
+        });
+
+        document.getElementById('btnGenerate').onclick = async function() {
+            const file = document.getElementById('imageInput').files[0];
+            const prompt = document.getElementById('promptInput').value;
+            const statusEl = document.getElementById('status');
+            const videoEl = document.getElementById('resultVideo');
+            const btn = document.getElementById('btnGenerate');
+
+            if (!file || !prompt) return alert('Pilih gambar dan isi prompt!');
+
+            btn.disabled = true;
+            videoEl.style.display = 'none';
+            statusEl.innerText = '⏳ Mengirim data ke server...';
+
+            try {
+                const base64 = await toBase64(file);
+                
+                // Mulai proses
+                let res = await fetch('/api/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, base64, mime: file.type })
+                });
+                let data = await res.json();
+                
+                if (!data.taskId) throw new Error('Gagal memulai task');
+                
+                statusEl.innerText = '⚙️ Video sedang diproses. Jangan tutup halaman ini...';
+
+                // Ngecek status setiap 5 detik (mengakali timeout Vercel)
+                const checkInterval = setInterval(async () => {
+                    let checkRes = await fetch(`/api/check?taskId=${data.taskId}&prompt=${encodeURIComponent(prompt)}`);
+                    let checkData = await checkRes.json();
+
+                    if (checkData.status === 'completed') {
+                        clearInterval(checkInterval);
+                        statusEl.innerText = '✅ Selesai!';
+                        videoEl.src = checkData.videoUrl;
+                        videoEl.style.display = 'block';
+                        btn.disabled = false;
+                    } else if (checkData.status === 'failed') {
+                        clearInterval(checkInterval);
+                        statusEl.innerText = '❌ Gagal: ' + checkData.error;
+                        btn.disabled = false;
+                    }
+                }, 5000);
+
+            } catch (err) {
+                statusEl.innerText = '❌ Error: ' + err.message;
+                btn.disabled = false;
+            }
+        };
+    </script>
+</body>
+</html>
